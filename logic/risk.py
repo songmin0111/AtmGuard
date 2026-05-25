@@ -1,33 +1,53 @@
 # logic/risk.py
 """
 위험도(Risk Level) 계산 모듈
-- LOW    : ROI 출입 1~2회 또는 체류 < 60초
-- MEDIUM : ROI 출입 3~4회 또는 체류 60~120초
-- HIGH   : ROI 출입 5회 이상 또는 무기 감지
+
+판단 기준
+- LOW: ROI 출입 1~2회 또는 체류 < 80초
+
+- MEDIUM: ROI 출입 3~4회 또는 체류 80~119초
+
+- HIGH: ROI 출입 5회 이상 또는 무기 감지 또는 체류 시간 120초 이상
 """
 
-def calculate_risk(entry_count: int, dwell_seconds: float, weapon_detected: bool) -> str:
-    """
-    entry_count     : ROI 진입 횟수
-    dwell_seconds   : ROI 내 누적 체류 시간(초)
-    weapon_detected : 무기 감지 여부
-    returns         : 'LOW' | 'MEDIUM' | 'HIGH'
-    """
-    if weapon_detected or entry_count >= 5:
+def calculate_risk(
+    entry_count: int,
+    dwell_seconds: float,
+    weapon_detected: bool
+) -> str:
+
+    # HIGH
+    if (
+        weapon_detected
+        or entry_count >= 5
+        or dwell_seconds >= 120
+    ):
         return "HIGH"
-    if entry_count >= 3 or dwell_seconds >= 60:
+
+    # MEDIUM
+    if (
+        entry_count >= 3
+        or dwell_seconds >= 80
+    ):
         return "MEDIUM"
+
+    # LOW
     return "LOW"
 
 
 RISK_COLOR = {
-    "LOW":    "#22c55e",   # green-500
-    "MEDIUM": "#f97316",   # orange-500
-    "HIGH":   "#ef4444",   # red-500
+
+    "LOW": "#22C55E",
+    "MEDIUM": "#F59E0B",
+    "HIGH": "#EF4444"
+
 }
 
+
 RISK_BG = {
-    "LOW":    "rgba(34,197,94,0.15)",
-    "MEDIUM": "rgba(249,115,22,0.15)",
-    "HIGH":   "rgba(239,68,68,0.20)",
+
+    "LOW": "rgba(34,197,94,0.15)",
+    "MEDIUM": "rgba(245,158,11,0.15)",
+    "HIGH": "rgba(239,68,68,0.20)"
+
 }
