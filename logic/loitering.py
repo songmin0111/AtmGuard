@@ -10,55 +10,71 @@ from logic.risk import calculate_risk
 
 
 class LoiteringTracker:
-    """Track ID별 ROI 출입 횟수 및 체류 시간을 관리한다."""
 
-    def __init__(self, entry_threshold: int = 5):
-        self.entry_threshold = entry_threshold
-        # { track_id: {"inside": bool, "entry_count": int,
-        #              "dwell_frames": int, "alerted": bool} }
-        self._state: dict = {}
+    def __init__(self):
 
-    def update(self, track_id: int, is_inside_roi: bool, fps: float = 25.0):
-        """
-        프레임마다 호출.
-        returns: dict with keys entry_count, dwell_seconds, risk, is_loitering
-        """
-        if track_id not in self._state:
-            self._state[track_id] = {
-                "inside": False,
-                "entry_count": 0,
-                "dwell_frames": 0,
-                "alerted": False,
+        self.state={}
+
+    def update(
+
+        self,
+        tid,
+        inside,
+        fps=25
+
+    ):
+
+        if tid not in self.state:
+
+            self.state[tid]={
+
+                "inside":False,
+
+                "entry_count":0,
+
+                "dwell_frames":0,
+
+                "risk":"LOW"
+
             }
 
-        s = self._state[track_id]
+        s=self.state[tid]
 
-        # 진입 감지 (outside → inside)
-        if not s["inside"] and is_inside_roi:
-            s["entry_count"] += 1
+        if not s["inside"] and inside:
 
-        # 체류 시간 누적
-        if is_inside_roi:
-            s["dwell_frames"] += 1
+            s["entry_count"]+=1
 
-        s["inside"] = is_inside_roi
+        if inside:
 
-        dwell_sec = s["dwell_frames"] / max(fps, 1)
-        risk = calculate_risk(s["entry_count"], dwell_sec, weapon_detected=False)
-        is_loitering = s["entry_count"] >= self.entry_threshold or dwell_sec >= 120
+            s["dwell_frames"]+=1
 
-        return {
-            "entry_count": s["entry_count"],
-            "dwell_seconds": dwell_sec,
-            "risk": risk,
-            "is_loitering": is_loitering,
+        dwell=s["dwell_frames"]/fps
+
+        risk=calculate_risk(
+
+            s["entry_count"],
+            dwell,
+            False
+
+        )
+
+        s["risk"]=risk
+        s["inside"]=inside
+
+        return{
+
+            "entry_count":
+                s["entry_count"],
+
+            "dwell_seconds":
+                dwell,
+
+            "risk":
+                risk,
+
+            "is_loitering":
+
+                s["entry_count"]>=5
+                or dwell>=120
+
         }
-
-    def reset(self, track_id: int):
-        self._state.pop(track_id, None)
-
-    def reset_all(self):
-        self._state.clear()
-
-    def get_all(self) -> dict:
-        return self._state
