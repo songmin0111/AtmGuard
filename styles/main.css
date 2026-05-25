@@ -1,0 +1,33 @@
+.block-container {
+  padding-top: 1rem;
+
+  max-width: 1450px;
+}
+
+.panel {
+  background: white;
+
+  border-radius: 12px;
+
+  padding: 14px;
+
+  border: 1px solid #e5e7eb;
+}
+
+.metric {
+  font-size: 12px;
+
+  font-weight: 600;
+}
+
+.risk-high {
+  background: #fff1f2;
+}
+
+.risk-medium {
+  background: #fef3c7;
+}
+
+.risk-low {
+  background: #f0fdf4;
+}
