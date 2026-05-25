@@ -1,0 +1,64 @@
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── 가상환경 ─────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+
+# ── 모델 가중치 (용량 큼 → Git LFS 또는 별도 공유) ────────────
+weights/*.pt
+weights/*.onnx
+weights/*.engine
+
+# ── 로그 / 데이터 ─────────────────────────────────────────────
+logs/*.csv
+logs/*.json
+!logs/.gitkeep
+
+# ── 업로드된 영상·이미지 임시파일 ─────────────────────────────
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+!assets/          # assets 폴더 있으면 예외
+
+# ── Streamlit 캐시 ─────────────────────────────────────────
+.streamlit/
+__streamlit_cache__/
+
+# ── Jupyter / Colab ────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Roboflow 다운로드 데이터셋 ────────────────────────────────
+datasets/
+data/
+runs/          # YOLO 학습 결과 폴더
+
+# ── API 키 / 환경변수 ─────────────────────────────────────────
+.env
+*.env
+secrets.toml
