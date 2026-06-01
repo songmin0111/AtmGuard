@@ -6,13 +6,12 @@ ByteTrack 래퍼.
 나중에 독립 ByteTrack 라이브러리 연동 시 이 파일을 확장한다.
 """
 
-
-class ByteTrackWrapper:
-    """placeholder – ultralytics 내장 bytetrack 사용 중"""
+class ByteTracker:
 
     def __init__(self):
-        pass
+
+        self.ids={}
 
     def reset(self):
-        """추적 상태 초기화 (새 영상 로드 시 호출)"""
-        pass
+
+        self.ids={}

@@ -42,11 +42,11 @@ class LoiteringTracker:
 
         if not s["inside"] and inside:
 
-            s["entry_count"]+=1
+            s["entry_count"]+=1 # ROI 진입 시 카운트
 
         if inside:
 
-            s["dwell_frames"]+=1
+            s["dwell_frames"]+=1 # ROI 안에 있는 동안 누적
 
         dwell=s["dwell_frames"]/fps
 

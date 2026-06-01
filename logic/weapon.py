@@ -9,11 +9,7 @@ WEAPON_CLASSES = {"hammer", "pliers", "weapon"}
 
 
 def detect_weapons(boxes, class_names: dict) -> list[dict]:
-    """
-    boxes       : YOLO result boxes (ultralytics Boxes 객체 or 빈 리스트)
-    class_names : model.names dict {int: str}
-    returns     : list of {"track_id", "cls_name", "conf", "xyxy"}
-    """
+    
     detections = []
     if boxes is None:
         return detections
@@ -22,6 +18,7 @@ def detect_weapons(boxes, class_names: dict) -> list[dict]:
         cls_id = int(box.cls[0].item())
         cls_name = class_names.get(cls_id, "unknown").lower()
         if cls_name in WEAPON_CLASSES:
+            # HIGH 위험 이벤트 생성
             track_id = int(box.id[0].item()) if box.id is not None else -1
             conf = float(box.conf[0].item())
             xyxy = box.xyxy[0].tolist()

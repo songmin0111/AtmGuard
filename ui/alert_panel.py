@@ -74,18 +74,11 @@ def risk_badge(risk):
 
     """
 
+def render_alert_panel(active_alerts):
 
-def render_alert_panel(
-
-    active_alerts
-
-):
-
-    st.markdown(
-    """
+    st.markdown("""
     ### 🚨 이상행동 감지 알림
-    """
-    )
+    """)
 
     if not active_alerts:
 
@@ -109,17 +102,13 @@ def render_alert_panel(
         )
 
         cnt = alert.get(
-
             "entry_count",
             0
-
         )
 
         dwell = alert.get(
-
             "dwell_seconds",
             0
-
         )
 
         bg = RISK_BG[risk]
@@ -130,71 +119,46 @@ def render_alert_panel(
 
         st.markdown(
 
-        f"""
+            f"""
+            <div style='
+            background:{bg};
+            border-left:6px solid {border};
+            padding:12px;
+            border-radius:10px;
+            margin-bottom:10px;
+            '>
 
-        <div style='
+            <div style='
+            display:flex;
+            justify-content:space-between;
+            '>
 
-        background:{bg};
+            <b>
+            {icon} ID #{tid:02d}
+            </b>
 
-        border-left:
+            {risk_badge(risk)}
 
-        6px solid {border};
+            </div>
 
-        padding:12px;
+            <div>
+            {event}
+            </div>
 
-        border-radius:10px;
+            <div style='
+            font-size:12px;
+            color:#64748b;
+            margin-top:4px;
+            '>
 
-        margin-bottom:10px;
+            ROI 진입 {cnt}회 |
+            체류 {dwell:.0f}초
 
-        '>
+            </div>
 
-        <div style='
+            </div>
 
-        display:flex;
-
-        justify-content:space-between;
-
-        '>
-
-        <b>
-
-        {icon}
-
-        ID #{tid:02d}
-
-        </b>
-
-        {risk_badge(risk)}
-
-        </div>
-
-        <div>
-
-        {event}
-
-        </div>
-
-        <div style='
-
-        font-size:12px;
-
-        color:#64748b;
-
-        margin-top:4px;
-
-        '>
-
-        ROI 진입 {cnt}회
-
-        |
-
-        체류 {dwell:.0f}초
-
-        </div>
-
-        </div>
-
-        """,
+            """,
 
         unsafe_allow_html=True
 
@@ -202,23 +166,21 @@ def render_alert_panel(
 
     top = active_alerts[0]
 
-    st.markdown(
-    "---"
-    )
+    st.markdown("---")
 
     st.caption(
-
-    f"관리자 대응 (ID #{top['track_id']:02d})"
-
+        f"관리자 대응 (ID #{top['track_id']:02d})"
     )
 
-    col1,col2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
     with col1:
 
         if st.button(
 
             "🚔 출동 명령",
+
+            key=f"dispatch_{top['track_id']}",
 
             use_container_width=True
 
@@ -233,17 +195,15 @@ def render_alert_panel(
 
             )
 
-            st.success(
-
-            "출동 명령 완료"
-
-            )
+            st.success("출동 명령 완료")
 
     with col2:
 
         if st.button(
 
             "❌ 오탐 처리",
+
+            key=f"false_{top['track_id']}",
 
             use_container_width=True
 
@@ -258,18 +218,10 @@ def render_alert_panel(
 
             )
 
-            st.info(
-
-            "오탐 처리 완료"
-
-            )
+            st.info("오탐 처리 완료")
 
 
-def render_risk_gauges(
-
-    track_states
-
-):
+def render_risk_gauges(track_states):
 
     st.markdown(
 
@@ -280,13 +232,7 @@ def render_risk_gauges(
     )
 
     if not track_states:
-
-        st.caption(
-
-        "추적 대상 없음"
-
-        )
-
+        st.caption("추적 대상 없음")
         return
 
     cols = st.columns(2)
@@ -307,11 +253,7 @@ def render_risk_gauges(
 
     )
 
-    for idx,(tid,state) in enumerate(
-
-        items[:6]
-
-    ):
+    for idx,(tid,state) in enumerate(items[:6]):
 
         risk = state["risk"]
 
@@ -319,15 +261,7 @@ def render_risk_gauges(
 
         dwell = state["dwell_seconds"]
 
-        score = min(
-
-            cnt*20
-            +
-            dwell/120*40,
-
-            100
-
-        )
+        score = min(cnt*20+dwell/120*40, 100)
 
         color = RISK_COLOR[risk]
 
@@ -337,76 +271,42 @@ def render_risk_gauges(
 
             st.markdown(
 
-            f"""
+                f"""
+                <div style="
+                background:{bg};
+                padding:12px;
+                border-radius:10px;
+                margin-bottom:10px;
+                ">
 
-            <div style='
+                <b>ID #{tid:02d}</b><br>
 
-            background:{bg};
+                ROI 진입 {cnt}회<br>
 
-            padding:12px;
+                체류 {dwell:.0f}초<br>
 
-            border-radius:10px;
+                위험도 {risk}
 
-            margin-bottom:10px;
+                <div style="
+                background:#e5e7eb;
+                height:7px;
+                border-radius:8px;
+                margin-top:8px;
+                ">
 
-            '>
+                <div style="
+                width:{score}%;
+                background:{color};
+                height:100%;
+                border-radius:8px;
+                ">
+                </div>
 
-            <b>
+                </div>
 
-            ID #{tid:02d}
+                </div>
+                """,
 
-            </b>
+                unsafe_allow_html=True
 
-            <br>
-
-            ROI 진입
-
-            {cnt}회
-
-            <br>
-
-            체류
-
-            {dwell:.0f}초
-
-            <br>
-
-            위험도
-
-            {risk}
-
-            <div style='
-
-            background:#e5e7eb;
-
-            height:7px;
-
-            border-radius:8px;
-
-            margin-top:8px;
-
-            '>
-
-            <div style='
-
-            width:{score}%;
-
-            background:{color};
-
-            height:100%;
-
-            border-radius:8px;
-
-            '>
-
-            </div>
-
-            </div>
-
-            </div>
-
-            """,
-
-            unsafe_allow_html=True
-
-            )
+                )

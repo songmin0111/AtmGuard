@@ -1,7 +1,6 @@
 .block-container {
+  max-width: 1200px;
   padding-top: 1rem;
-
-  max-width: 1450px;
 }
 
 .panel {
