@@ -4,9 +4,11 @@ import time
 import tempfile
 import os
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import streamlit as st
+from streamlit_drawable_canvas import st_canvas
 
 # 모델 관련
 from models.detector import (
@@ -49,6 +51,18 @@ from ui.stats import (
     render_hourly_chart
 )
 
+# ByteTrack 커스텀 yaml (track_buffer 늘려서 ID 유지 향상) 
+import ultralytics
+_DEFAULT_BT = Path(ultralytics.__file__).parent / "cfg" / "trackers" / "bytetrack.yaml"
+CUSTOM_BT   = Path("bytetrack_custom.yaml")
+
+if not CUSTOM_BT.exists():
+    with open(_DEFAULT_BT) as f:
+        cfg = yaml.safe_load(f)
+    cfg["track_buffer"] = 60       # 원래 30 -> 60: ID 끊김 감소
+    cfg["match_thresh"]  = 0.7     # 기본 0.8 -> 0.7: 매칭 더 관대하게
+    with open(CUSTOM_BT, "w") as f:
+        yaml.dump(cfg, f)
 
 # streamlit 기본 설정
 st.set_page_config(
@@ -57,7 +71,19 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 최초 1회만 생성할 객체(session 유지)
+# 세션 state 초기화 
+for key, default in [
+    ("model",        None),
+    ("tracker",      None),
+    ("roi",          None),
+    ("alerts",       []),
+    ("track_states", {}),
+    ("first_frame",  None),   # ROI 드래그용 첫 프레임
+    ("logged_ids",   set()),  # 이미 로그 기록한 (tid, event) 쌍
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
+        
 # yolo 모델 로딩
 if "model" not in st.session_state:
     st.session_state.model=load_model()
@@ -65,19 +91,6 @@ if "model" not in st.session_state:
 # 서성거림 상태
 if "tracker" not in st.session_state:
     st.session_state.tracker=LoiteringTracker()
-
-# roi 정보
-if "roi" not in st.session_state:
-    st.session_state.roi=None
-
-# 현재 경고 목록
-if "alerts" not in st.session_state:
-    st.session_state.alerts=[]
-
-# id별 상태 저장
-if "track_states" not in st.session_state:
-    st.session_state.track_states={}
-
 
 model=st.session_state.model
 tracker=st.session_state.tracker
@@ -90,32 +103,102 @@ uploaded = st.file_uploader(
     type=["mp4", "avi", "png", "jpg", "jpeg"]
 )
 
-# 업로드 아래 설정 영역 병렬 배치
-conf_col, roi_col = st.columns([1, 2])
+# 업로드가 바뀌면 첫 프레임 / tracker 초기화
+if uploaded is not None:
+    file_id = uploaded.file_id if hasattr(uploaded, "file_id") else uploaded.name
+    if st.session_state.get("last_file") != file_id:
+        st.session_state.last_file   = file_id
+        st.session_state.first_frame = None
+        st.session_state.roi         = None
+        st.session_state.tracker     = LoiteringTracker()
+        tracker = st.session_state.tracker
+        st.session_state.logged_ids  = set()
 
-with conf_col:
-    conf = st.slider("Confidence", 0.1, 1.0, 0.4)
+conf = st.slider("Confidence", 0.1, 1.0, 0.4)
 
-with roi_col:
-    st.markdown("### ROI 설정")
-    row1 = st.columns(2)
-    
-    with row1[0]:
-        x1 = st.number_input("ROI x1", 0, 2000, 200)
+#  ROI 드래그 선택 (첫 프레임에서)
+if uploaded is not None and st.session_state.first_frame is None:
+    suffix = uploaded.name.split(".")[-1].lower()
+    is_img = suffix in ["png", "jpg", "jpeg"]
+    raw    = uploaded.read()
+    uploaded.seek(0)   # 다시 읽을 수 있게 리셋
 
-    with row1[1]:
-        y1 = st.number_input("ROI y1", 0, 2000, 100)
+    if is_img:
+        arr   = np.frombuffer(raw, np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    else:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as t:
+            t.write(raw)
+            tpath = t.name
+        cap0 = cv2.VideoCapture(tpath)
+        ret, frame = cap0.read()
+        cap0.release()
+        os.remove(tpath)
+        if not ret:
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-    row2 = st.columns(2)
+    st.session_state.first_frame = frame
 
-    with row2[0]:
-        x2 = st.number_input("ROI x2", 0, 2000, 500)
+if st.session_state.first_frame is not None:
+    frame0 = st.session_state.first_frame
+    h0, w0 = frame0.shape[:2]
 
-    with row2[1]:
-        y2 = st.number_input("ROI y2", 0, 2000, 400)
-    
-roi = (x1, y1, x2, y2) if (x2 > x1 and y2 > y1) else None
-st.session_state.roi = roi
+    # 캔버스 표시 너비
+    CANVAS_W = 700
+    scale    = CANVAS_W / w0
+    canvas_h = int(h0 * scale)
+
+    frame_rgb = cv2.cvtColor(frame0, cv2.COLOR_BGR2RGB)
+
+    st.markdown("### ROI 설정 — 아래 이미지 위에서 드래그하세요")
+
+    canvas_result = st_canvas(
+        fill_color  = "rgba(0,100,255,0.15)",
+        stroke_width= 2,
+        stroke_color= "#0064ff",
+        background_image = st.session_state.get("_canvas_img",
+                            __import__("PIL").Image.fromarray(
+                                cv2.resize(frame_rgb, (CANVAS_W, canvas_h))
+                            )),
+        update_streamlit = True,
+        width  = CANVAS_W,
+        height = canvas_h,
+        drawing_mode = "rect",
+        key  = "roi_canvas",
+    )
+
+    # PIL 이미지를 session에 저장 (재렌더링 시 유지)
+    if "_canvas_img" not in st.session_state:
+        import PIL.Image
+        st.session_state["_canvas_img"] = PIL.Image.fromarray(
+            cv2.resize(frame_rgb, (CANVAS_W, canvas_h))
+        )
+
+    # 캔버스에서 마지막으로 그려진 rect 읽기
+    roi = None
+    if (
+        canvas_result.json_data is not None
+        and len(canvas_result.json_data["objects"]) > 0
+    ):
+        obj   = canvas_result.json_data["objects"][-1]   # 마지막 rect
+        left  = obj["left"]
+        top   = obj["top"]
+        rw    = obj["width"]
+        rh    = obj["height"]
+
+        # 캔버스 좌표 → 원본 해상도로 역변환
+        x1 = int(left  / scale)
+        y1 = int(top   / scale)
+        x2 = int((left + rw) / scale)
+        y2 = int((top  + rh) / scale)
+
+        if x2 > x1 and y2 > y1:
+            roi = (x1, y1, x2, y2)
+            st.session_state.roi = roi
+            st.caption(f"ROI 지정됨: ({x1}, {y1}) → ({x2}, {y2})")
+    else:
+        st.caption("ROI를 드래그해서 그려주세요 (ATM 주변 영역)")
+
 
 # UI 영역 생성
 video_area = st.empty()
@@ -187,15 +270,14 @@ if is_image:
         weapons = detect_weapons(result.boxes, model.names)
 
         for w in weapons:
-            frame = draw_weapon_box(
-                frame, w["xyxy"], w["track_id"], w["cls_name"], w["conf"]
-            )
+            frame = draw_weapon_box(frame, w["xyxy"], w["track_id"], w["cls_name"], w["conf"])
+            key = (w["track_id"], "weapon")
+            if key not in st.session_state.logged_ids:
+                append_event(w["track_id"], "weapon", "HIGH")
+                st.session_state.logged_ids.add(key)
             alerts.append({
-                "track_id":    w["track_id"],
-                "event_type":  "weapon",
-                "risk":        "HIGH",
-                "entry_count": 1,
-                "dwell_seconds": 0
+                "track_id": w["track_id"], "event_type": "weapon",
+                "risk": "HIGH", "entry_count": 1, "dwell_seconds": 0
             })
 
     if roi:
@@ -217,15 +299,13 @@ cap = None
 
 try:
     # 임시파일 저장
+    uploaded.seek(0)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
         tmp.write(uploaded.read())
         tmp_path = tmp.name
 
     cap = cv2.VideoCapture(tmp_path)
-
-    fps_video = cap.get(cv2.CAP_PROP_FPS)
-    if fps_video <= 0:
-        fps_video = 25.0
+    fps_video = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
     # 새 영상 → tracker 초기화
     tracker.state = {}
@@ -287,7 +367,13 @@ try:
                     "dwell_seconds": state["dwell_seconds"]
                 }
 
+                # 무기/서성거림 감지 시 즉시 로그 기록 (중복 방지)
                 if status != "Normal":
+                    log_key = (tid, status.lower())
+                    if log_key not in st.session_state.logged_ids:
+                        append_event(tid, status.lower(), risk)
+                        st.session_state.logged_ids.add(log_key)
+
                     frame_alerts.append({
                         "track_id":      tid,
                         "event_type":    status.lower(),
@@ -313,8 +399,6 @@ try:
 
         frame = draw_fps(frame, fps_now)
         rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        # 영상 프레임은 매 프레임 갱신
         video_area.image(rgb, width=700)
 
         # session_state 갱신은 하되
