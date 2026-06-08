@@ -3,6 +3,7 @@ import cv2
 import time
 import tempfile
 import os
+import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -73,7 +74,6 @@ st.set_page_config(
 
 # 세션 state 초기화 
 for key, default in [
-    ("model",        None),
     ("tracker",      None),
     ("roi",          None),
     ("alerts",       []),
@@ -86,11 +86,11 @@ for key, default in [
         
 # yolo 모델 로딩
 if "model" not in st.session_state:
-    st.session_state.model=load_model()
+    st.session_state.model = load_model()
 
 # 서성거림 상태
 if "tracker" not in st.session_state:
-    st.session_state.tracker=LoiteringTracker()
+    st.session_state.tracker = LoiteringTracker()
 
 model=st.session_state.model
 tracker=st.session_state.tracker
