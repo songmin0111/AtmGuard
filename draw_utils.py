@@ -1,6 +1,5 @@
-# ──────────────────────────────────────────────
-# draw_utils.py  —  OpenCV 시각화 유틸리티
-# ──────────────────────────────────────────────
+# OpenCV 시각화 유틸리티
+
 
 import cv2
 import numpy as np
@@ -11,7 +10,7 @@ from event_logic import TrackState
 
 
 def draw_roi(frame: np.ndarray, roi: Tuple[int, int, int, int]) -> np.ndarray:
-    """ROI 영역을 파란색 점선 사각형으로 표시한다."""
+    # ROI 영역을 파란색 점선 사각형으로 표시
     x1, y1, x2, y2 = roi
 
     # 점선 효과: 짧은 선분을 반복해서 그림
@@ -52,9 +51,7 @@ def draw_person_box(
     frame: np.ndarray,
     state: TrackState,
 ) -> np.ndarray:
-    """
-    사람 bbox 위에 Track ID / 체류시간 / 진입횟수 / 위험도를 표시한다.
-    """
+    # 사람 bbox 위에 Track ID / 체류시간 / 진입횟수 / 위험도를 표시
     x1, y1, x2, y2 = [int(v) for v in state.bbox]
     color = RISK_COLORS.get(state.risk_level, (128, 128, 128))
 
@@ -101,7 +98,7 @@ def draw_person_box(
 
 
 def draw_weapon_alert(frame: np.ndarray, weapon_count: int) -> np.ndarray:
-    """weapon 감지 시 화면 상단에 붉은 경고 배너를 표시한다."""
+    # weapon 감지 시 화면 상단에 붉은 경고 배너를 표시한다
     h, w = frame.shape[:2]
     banner_h = 42
 
@@ -120,7 +117,7 @@ def draw_weapon_alert(frame: np.ndarray, weapon_count: int) -> np.ndarray:
 
 
 def draw_fps(frame: np.ndarray, fps: float) -> np.ndarray:
-    """우측 상단에 FPS 를 표시한다."""
+    # 우측 상단에 FPS 를 표시한다
     h, w = frame.shape[:2]
     text = f"FPS: {fps:.1f}"
     cv2.putText(

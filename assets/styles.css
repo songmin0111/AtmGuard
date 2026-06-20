@@ -1,0 +1,134 @@
+/* 사이드바 navy */
+[data-testid="stSidebar"] {
+  background: #0f172a !important;
+  border-right: 1px solid #1e293b;
+}
+[data-testid="stSidebar"] * {
+  color: #e2e8f0 !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #e2e8f0 !important;
+  width: 100%;
+  text-align: left;
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-bottom: 4px;
+  transition: background 0.15s;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+  background: #1e3a5f !important;
+}
+.nav-active > button {
+  background: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+}
+
+/* 메인 배경 */
+.main .block-container {
+  background: #f8fafc;
+  padding: 1.5rem 2rem;
+}
+
+/* 카드 */
+.event-card {
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-left: 4px solid;
+}
+.card-HIGH {
+  background: #fff1f2;
+  border-color: #dc2626;
+}
+.card-MED {
+  background: #fff7ed;
+  border-color: #ea580c;
+}
+.card-LOW {
+  background: #f0fdf4;
+  border-color: #16a34a;
+}
+
+/* 뱃지  */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.badge-HIGH {
+  background: #dc2626;
+  color: #fff;
+}
+.badge-MED {
+  background: #ea580c;
+  color: #fff;
+}
+.badge-LOW {
+  background: #16a34a;
+  color: #fff;
+}
+.badge-OK {
+  background: #2563eb;
+  color: #fff;
+}
+.badge-FALSE {
+  background: #6b7280;
+  color: #fff;
+}
+
+/* 메트릭 카드 */
+.metric-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px 22px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+  text-align: center;
+}
+.metric-val {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+.metric-label {
+  font-size: 0.82rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+/* 섹션 헤더*/
+.section-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+.section-sub {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin-bottom: 1.2rem;
+}
+
+/* 업로드 안내 박스 */
+.upload-hint {
+  background: #fff;
+  border-radius: 16px;
+  padding: 60px 40px;
+  text-align: center;
+  border: 2px dashed #cbd5e1;
+}
+
+/* streamlit 기본 멀티페이지 nav 완전 숨김 */
+[data-testid="stSidebarNav"] {
+  display: none !important;
+}
+/* 사이드바 상단 여백 보정 */
+[data-testid="stSidebarContent"] {
+  padding-top: 0 !important;
+}
