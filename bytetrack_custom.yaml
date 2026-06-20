@@ -1,7 +1,18 @@
-fuse_score: true
-match_thresh: 0.7
-new_track_thresh: 0.25
-track_buffer: 60
-track_high_thresh: 0.25
-track_low_thresh: 0.1
+# bytetrack_custom.yaml
+# ID 재할당 최소화를 위한 ByteTrack 파라미터
+# CCTV 환경 (느린 이동, 빈번한 가림) 최적화
+
 tracker_type: bytetrack
+
+# 트랙 버퍼: 객체가 사라진 후 몇 프레임 동안 ID를 유지할지
+# 기본 30 → 90으로 늘려서 일시적 가림 시 ID 유지
+track_buffer: 90
+
+# 매칭 임계값: 높을수록 엄격하게 매칭 (ID 혼용 방지)
+track_high_thresh: 0.4 # 신뢰도 높은 detection 임계값
+track_low_thresh: 0.1 # 신뢰도 낮은 detection 임계값 (2차 매칭용)
+new_track_thresh: 0.4 # 새 track 생성 임계값
+
+# IOU 매칭 임계값: 낮추면 더 많은 박스가 같은 ID로 매칭됨
+match_thresh: 0.8
+fuse_score: True

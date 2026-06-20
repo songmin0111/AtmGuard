@@ -1,426 +1,426 @@
-# ATM GUARD 메인 Streamlit 앱
-import cv2
-import time
-import tempfile
-import os
-import yaml
-from datetime import datetime
-from pathlib import Path
+# ──────────────────────────────────────────────
+# app.py  —  ATM Guard MVP  Streamlit 진입점
+# ──────────────────────────────────────────────
 
+import os
+import time
+import cv2
 import numpy as np
 import streamlit as st
+from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 
-# 모델 관련
-from models.detector import (
-    load_model,
-    run_detection,
-    run_tracking
+from config import (
+    ALLOWED_VIDEO_EXTENSIONS,
+    DEFAULT_CONF_THRESHOLD,
+    CANVAS_WIDTH,
+    WEAPON_CLASS_NAMES,
+    RISK_COLORS_HEX,
+    PAGE_TITLE,
+    PAGE_ICON,
+    SIDEBAR_TITLE,
+    MED_DWELL_SECONDS,
+    HIGH_DWELL_SECONDS,
+    MED_ENTRY_COUNT,
+    HIGH_ENTRY_COUNT,
+    MODEL_PATH,
 )
-
-# 이상행동 로직
-from logic.loitering import LoiteringTracker
-from logic.weapon import detect_weapons
-from logic.risk import calculate_risk
-
-# 시각화
-from utils.draw import (
-    draw_roi,
-    draw_person_box,
-    draw_weapon_box,
-    draw_fps
+from inference import load_model, run_tracking
+from roi_utils import (
+    extract_first_frame,
+    get_video_fps,
+    save_uploaded_video,
+    convert_canvas_rect_to_original,
+    get_box_center,
+    is_center_inside_roi,
 )
-
-# roi 계산
-from utils.roi import (
-    center_of_box, # 객체 중심좌표 계산
-    is_inside_roi # roi 내부 여부 판단
-)
-
-# 로그 저장
-from utils.logger import append_event
+from event_logic import LoiteringStateManager
+from draw_utils import draw_roi, draw_person_box, draw_weapon_alert, draw_fps
 
 
-# UI 패널
-from ui.alert_panel import (
-    render_alert_panel,
-    render_risk_gauges
-)
-
-from ui.stats import (
-    render_event_log,
-    render_hourly_chart
-)
-
-# ByteTrack 커스텀 yaml (track_buffer 늘려서 ID 유지 향상) 
-import ultralytics
-_DEFAULT_BT = Path(ultralytics.__file__).parent / "cfg" / "trackers" / "bytetrack.yaml"
-CUSTOM_BT   = Path("bytetrack_custom.yaml")
-
-if not CUSTOM_BT.exists():
-    with open(_DEFAULT_BT) as f:
-        cfg = yaml.safe_load(f)
-    cfg["track_buffer"] = 60       # 원래 30 -> 60: ID 끊김 감소
-    cfg["match_thresh"]  = 0.7     # 기본 0.8 -> 0.7: 매칭 더 관대하게
-    with open(CUSTOM_BT, "w") as f:
-        yaml.dump(cfg, f)
-
-# streamlit 기본 설정
+# ══════════════════════════════════════════════
+# 페이지 설정
+# ══════════════════════════════════════════════
 st.set_page_config(
-    page_title="ATM GUARD",
+    page_title=PAGE_TITLE,
+    page_icon=PAGE_ICON,
     layout="wide",
-    initial_sidebar_state="collapsed"
 )
 
-# 세션 state 초기화 
-for key, default in [
-    ("tracker",      None),
-    ("roi",          None),
-    ("alerts",       []),
-    ("track_states", {}),
-    ("first_frame",  None),   # ROI 드래그용 첫 프레임
-    ("logged_ids",   set()),  # 이미 로그 기록한 (tid, event) 쌍
-]:
-    if key not in st.session_state:
-        st.session_state[key] = default
-        
-# yolo 모델 로딩
-if "model" not in st.session_state:
-    st.session_state.model = load_model()
 
-# 서성거림 상태
-if "tracker" not in st.session_state:
-    st.session_state.tracker = LoiteringTracker()
+# ══════════════════════════════════════════════
+# Session State 초기화
+# ══════════════════════════════════════════════
+def _init_session_state():
+    defaults = {
+        "roi": None,                  # (x1,y1,x2,y2) 원본 좌표
+        "first_frame": None,          # np.ndarray BGR
+        "analysis_started": False,
+        "current_video_id": None,     # 업로드 파일명 + 크기로 구분
+        "events": [],                 # EventLog 리스트
+        "loitering_mgr": None,        # LoiteringStateManager 인스턴스
+        "video_path": None,           # 임시 저장 경로
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-model=st.session_state.model
-tracker=st.session_state.tracker
 
-st.title("🛡️ ATM GUARD")
+def _reset_analysis():
+    """ROI + 분석 상태만 초기화 (영상은 유지)."""
+    st.session_state.roi              = None
+    st.session_state.analysis_started = False
+    st.session_state.events           = []
+    st.session_state.loitering_mgr    = LoiteringStateManager()
 
-# 업로드
-uploaded = st.file_uploader(
-    "영상 / 이미지 업로드",
-    type=["mp4", "avi", "png", "jpg", "jpeg"]
-)
 
-# 업로드가 바뀌면 첫 프레임 / tracker 초기화
-if uploaded is not None:
-    file_id = uploaded.file_id if hasattr(uploaded, "file_id") else uploaded.name
-    if st.session_state.get("last_file") != file_id:
-        st.session_state.last_file   = file_id
-        st.session_state.first_frame = None
-        st.session_state.roi         = None
-        st.session_state.tracker     = LoiteringTracker()
-        tracker = st.session_state.tracker
-        st.session_state.logged_ids  = set()
+def _full_reset():
+    """영상 포함 전체 초기화."""
+    _reset_analysis()
+    st.session_state.first_frame      = None
+    st.session_state.current_video_id = None
+    st.session_state.video_path       = None
 
-conf = st.slider("Confidence", 0.1, 1.0, 0.4)
 
-#  ROI 드래그 선택 (첫 프레임에서)
-if uploaded is not None and st.session_state.first_frame is None:
-    suffix = uploaded.name.split(".")[-1].lower()
-    is_img = suffix in ["png", "jpg", "jpeg"]
-    raw    = uploaded.read()
-    uploaded.seek(0)   # 다시 읽을 수 있게 리셋
+_init_session_state()
 
-    if is_img:
-        arr   = np.frombuffer(raw, np.uint8)
-        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    else:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as t:
-            t.write(raw)
-            tpath = t.name
-        cap0 = cv2.VideoCapture(tpath)
-        ret, frame = cap0.read()
-        cap0.release()
-        os.remove(tpath)
-        if not ret:
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-    st.session_state.first_frame = frame
+# ══════════════════════════════════════════════
+# 모델 로드 (캐싱)
+# ══════════════════════════════════════════════
+model = None
+try:
+    model = load_model()
+except FileNotFoundError as e:
+    st.error(str(e))
+except Exception as e:
+    st.error(f"모델 로드 중 오류가 발생했습니다: {e}")
 
-if st.session_state.first_frame is not None:
-    frame0 = st.session_state.first_frame
-    h0, w0 = frame0.shape[:2]
 
-    # 캔버스 표시 너비
-    CANVAS_W = 700
-    scale    = CANVAS_W / w0
-    canvas_h = int(h0 * scale)
+# ══════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════
+with st.sidebar:
+    st.title(SIDEBAR_TITLE)
+    st.markdown("---")
 
-    frame_rgb = cv2.cvtColor(frame0, cv2.COLOR_BGR2RGB)
-
-    st.markdown("### ROI 설정 — 아래 이미지 위에서 드래그하세요")
-
-    canvas_result = st_canvas(
-        fill_color  = "rgba(0,100,255,0.15)",
-        stroke_width= 2,
-        stroke_color= "#0064ff",
-        background_image = st.session_state.get("_canvas_img",
-                            __import__("PIL").Image.fromarray(
-                                cv2.resize(frame_rgb, (CANVAS_W, canvas_h))
-                            )),
-        update_streamlit = True,
-        width  = CANVAS_W,
-        height = canvas_h,
-        drawing_mode = "rect",
-        key  = "roi_canvas",
+    conf_threshold = st.slider(
+        "Confidence Threshold",
+        min_value=0.1,
+        max_value=0.9,
+        value=DEFAULT_CONF_THRESHOLD,
+        step=0.05,
+        help=(
+            "임계값을 높이면 더 확실한 객체만 탐지하지만 "
+            "놓치는 객체가 늘어날 수 있습니다. "
+            "오탐을 줄이고 싶으면 값을 높이세요."
+        ),
     )
 
-    # PIL 이미지를 session에 저장 (재렌더링 시 유지)
-    if "_canvas_img" not in st.session_state:
-        import PIL.Image
-        st.session_state["_canvas_img"] = PIL.Image.fromarray(
-            cv2.resize(frame_rgb, (CANVAS_W, canvas_h))
-        )
+    st.markdown("---")
+    st.subheader("Loitering 위험도 기준")
+    st.markdown(
+        f"""
+| 위험도 | 조건 |
+|--------|------|
+| 🟢 LOW  | ROI 진입 |
+| 🟠 MED  | 체류 **{MED_DWELL_SECONDS}초** 이상 또는 진입 **{MED_ENTRY_COUNT}회** 이상 |
+| 🔴 HIGH | 체류 **{HIGH_DWELL_SECONDS}초** 이상 또는 진입 **{HIGH_ENTRY_COUNT}회** 이상 |
+        """
+    )
 
-    # 캔버스에서 마지막으로 그려진 rect 읽기
-    roi = None
+    st.markdown("---")
+    st.subheader("모델 정보")
+    model_ok = os.path.exists(MODEL_PATH)
+    st.markdown(
+        f"{'✅' if model_ok else '❌'} `{MODEL_PATH}`"
+    )
+    if model is not None:
+        st.subheader("감지 클래스")
+        for cls_id, cls_name in model.names.items():
+            st.markdown(f"- `{cls_id}`: {cls_name}")
+
+
+# ══════════════════════════════════════════════
+# 메인 영역 헤더
+# ══════════════════════════════════════════════
+st.title("🛡️ ATM Guard — 이상행동 감지 시스템")
+st.caption("CCTV 영상을 업로드하고, ATM 주변 ROI를 지정하면 자동으로 분석을 시작합니다.")
+st.markdown("---")
+
+
+# ══════════════════════════════════════════════
+# STEP 1 : 영상 업로드
+# ══════════════════════════════════════════════
+uploaded = st.file_uploader(
+    "📂 CCTV 영상 업로드",
+    type=["mp4", "avi", "mov"],
+    help="mp4 / avi / mov 파일만 지원합니다.",
+)
+
+if uploaded is None:
+    st.info("분석할 CCTV 영상을 업로드해주세요.")
+    st.stop()
+
+# 확장자 이중 검증
+ext = os.path.splitext(uploaded.name)[-1].lower()
+if ext not in ALLOWED_VIDEO_EXTENSIONS:
+    st.error("지원하지 않는 파일 형식입니다. mp4, avi, mov 파일만 업로드해주세요.")
+    st.stop()
+
+# 새 영상이면 전체 초기화
+video_id = f"{uploaded.name}_{uploaded.size}"
+if st.session_state.current_video_id != video_id:
+    _full_reset()
+    st.session_state.current_video_id = video_id
+    # 임시 파일로 저장
+    video_path = save_uploaded_video(uploaded)
+    st.session_state.video_path = video_path
+    # 첫 프레임 추출
+    first_frame = extract_first_frame(video_path)
+    if first_frame is None:
+        st.error("영상에서 첫 프레임을 읽을 수 없습니다. 다른 영상을 업로드해주세요.")
+        st.stop()
+    st.session_state.first_frame = first_frame
+    st.session_state.loitering_mgr = LoiteringStateManager()
+
+video_path   = st.session_state.video_path
+first_frame  = st.session_state.first_frame
+
+
+# ══════════════════════════════════════════════
+# STEP 2 : ROI 설정 (분석 전)
+# ══════════════════════════════════════════════
+if not st.session_state.analysis_started:
+    st.subheader("📍 ATM 주변 ROI 설정")
+    st.info(
+        "아래 영상 위에서 **마우스로 드래그**하여 ATM 접근 구역을 지정하세요. "
+        "사각형을 그리면 즉시 분석이 시작됩니다."
+    )
+
+    orig_h, orig_w = first_frame.shape[:2]
+
+    # canvas 크기 계산 (비율 유지)
+    canvas_w = min(CANVAS_WIDTH, orig_w)
+    canvas_h = int(orig_h * canvas_w / orig_w)
+
+    # PIL 이미지 변환 (매번 새로 생성 → background_image 오류 방지)
+    frame_rgb  = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+    pil_image  = Image.fromarray(frame_rgb).resize((canvas_w, canvas_h))
+
+    canvas_result = st_canvas(
+        fill_color="rgba(0, 180, 255, 0.15)",
+        stroke_width=2,
+        stroke_color="#00b4ff",
+        background_image=pil_image,
+        update_streamlit=True,
+        height=canvas_h,
+        width=canvas_w,
+        drawing_mode="rect",
+        key="roi_canvas",
+    )
+
+    # ROI 추출
     if (
         canvas_result.json_data is not None
-        and len(canvas_result.json_data["objects"]) > 0
+        and len(canvas_result.json_data.get("objects", [])) > 0
     ):
-        obj   = canvas_result.json_data["objects"][-1]   # 마지막 rect
-        left  = obj["left"]
-        top   = obj["top"]
-        rw    = obj["width"]
-        rh    = obj["height"]
-
-        # 캔버스 좌표 → 원본 해상도로 역변환
-        x1 = int(left  / scale)
-        y1 = int(top   / scale)
-        x2 = int((left + rw) / scale)
-        y2 = int((top  + rh) / scale)
-
-        if x2 > x1 and y2 > y1:
-            roi = (x1, y1, x2, y2)
+        objects = canvas_result.json_data["objects"]
+        # 마지막 사각형 사용
+        last_obj = objects[-1]
+        roi = convert_canvas_rect_to_original(
+            last_obj, canvas_w, canvas_h, orig_w, orig_h
+        )
+        if roi is not None:
             st.session_state.roi = roi
-            st.caption(f"ROI 지정됨: ({x1}, {y1}) → ({x2}, {y2})")
+            st.session_state.analysis_started = True
+            st.success(f"✅ ROI 설정 완료: {roi}  →  분석을 시작합니다!")
+            st.rerun()
+        else:
+            st.warning("ROI가 너무 작습니다. 더 크게 드래그해주세요.")
     else:
-        st.caption("ROI를 드래그해서 그려주세요 (ATM 주변 영역)")
+        st.warning("먼저 ATM 주변 영역을 ROI로 드래그해서 지정해주세요.")
 
-
-# UI 영역 생성
-video_area = st.empty()
-st.divider()
-
-bottom1,bottom2=st.columns([2,1])
-# 하단 로그
-log_area=bottom1.empty()
-
-# 통계 그래프
-chart_area=bottom2.empty()
-panel1,panel2=st.columns([1,1])
-
-# 알림 패널
-alert_area=panel1.empty()
-
-# 위험도 패널
-risk_area=panel2.empty()
-
-# 초기 렌더
-with log_area:
-    render_event_log()
-
-with alert_area:
-    render_alert_panel(st.session_state.alerts)  # 초기엔 [] 이므로 "정상 운영" 표시됨
-
-with risk_area:
-    render_risk_gauges(st.session_state.track_states)
-
-# 우측 패널 - 업데이트 함수 -> 우측/하단 패널 일괄 갱신: 루프 끝난 후 호출
-def update_ui():
-
-    # 이상행동 카드 갱신
-    with alert_area:
-        render_alert_panel(st.session_state.alerts)
-
-    # 위험도 패널 갱신
-    with risk_area:
-        render_risk_gauges(st.session_state.track_states)
-        
-    with log_area:
-        render_event_log()
-
-    with chart_area:
-        render_hourly_chart()
-
-# 업로드 없으면 대기
-if uploaded is None:
-    st.info("영상을 업로드하세요")
     st.stop()
 
 
-# 이미지 OR 영상
-suffix=uploaded.name.split(".")[-1].lower()
-is_image=suffix.lower() in ["png","jpg","jpeg"]
+# ══════════════════════════════════════════════
+# STEP 3 : 영상 분석 루프
+# ══════════════════════════════════════════════
+roi = st.session_state.roi
+mgr: LoiteringStateManager = st.session_state.loitering_mgr
 
-
-# 이미지 처리
-if is_image:
-
-    file_bytes=np.frombuffer(uploaded.read(), np.uint8)
-    frame=cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-    roi=st.session_state.roi
-    result=run_detection(model, frame, conf)
-    alerts=[]
-    
-    if result is not None:
-        weapons = detect_weapons(result.boxes, model.names)
-
-        for w in weapons:
-            frame = draw_weapon_box(frame, w["xyxy"], w["track_id"], w["cls_name"], w["conf"])
-            key = (w["track_id"], "weapon")
-            if key not in st.session_state.logged_ids:
-                append_event(w["track_id"], "weapon", "HIGH")
-                st.session_state.logged_ids.add(key)
-            alerts.append({
-                "track_id": w["track_id"], "event_type": "weapon",
-                "risk": "HIGH", "entry_count": 1, "dwell_seconds": 0
-            })
-
-    if roi:
-        frame = draw_roi(frame, roi)
-
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    video_area.image(rgb, width=700)
-
-    st.session_state.alerts = alerts
-    st.session_state.track_states = {}
-    update_ui()
+if model is None:
+    st.error("모델이 로드되지 않았습니다. weights/best.pt 를 확인해주세요.")
     st.stop()
-    
 
-# 영상 처리
-# tempfile을 with 블록으로 관리
-tmp_path = None
-cap = None
+col_video, col_info = st.columns([3, 1])
 
-try:
-    # 임시파일 저장
-    uploaded.seek(0)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        tmp.write(uploaded.read())
-        tmp_path = tmp.name
+with col_video:
+    st.subheader("🎥 실시간 분석")
+    if st.button("🔄 ROI 재설정", key="reset_btn"):
+        _reset_analysis()
+        st.rerun()
+    video_placeholder = st.empty()
 
-    cap = cv2.VideoCapture(tmp_path)
-    fps_video = cap.get(cv2.CAP_PROP_FPS) or 25.0
+with col_info:
+    st.subheader("🚨 이벤트 로그")
+    event_placeholder = st.empty()
 
-    # 새 영상 → tracker 초기화
-    tracker.state = {}
+# ── FPS 계산용 변수 ────────────────────────────
+video_fps   = get_video_fps(video_path)
+fps_history = []
+frame_times = []
 
-    frame_count = 0
-    prev_time   = time.time()
+cap = cv2.VideoCapture(video_path)
+if not cap.isOpened():
+    st.error("영상 파일을 열 수 없습니다.")
+    st.stop()
 
-    # 누적 alerts / track_states (루프 전체에서 최신 상태 유지)
-    alerts       = []
-    track_states = {}
+roi_x1, roi_y1, roi_x2, roi_y2 = roi
 
-    # 프레임 루프
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+while cap.isOpened():
+    t0 = time.perf_counter()
 
-        frame_count += 1
-        roi = st.session_state.roi
+    ret, frame = cap.read()
+    if not ret:
+        break  # 영상 끝
 
-        result = run_tracking(model, frame, conf)
+    # 원본 프레임 복사 → overlay 잔상 방지
+    frame = frame.copy()
 
-        frame_alerts  = []
-        frame_weapons = []
+    # ── YOLO + ByteTrack 추론 ──────────────────
+    try:
+        results, class_names = run_tracking(model, frame, conf_threshold)
+    except Exception as e:
+        st.warning(f"추론 오류 (프레임 스킵): {e}")
+        continue
 
-        if result is not None:
-            frame_weapons = detect_weapons(result.boxes, model.names)
+    # ── per-frame 초기화 ───────────────────────
+    weapon_count = 0
+    weapon_boxes = []          # 이번 프레임 weapon bbox 목록
+    active_track_ids = set()   # 이번 프레임에 실제 감지된 ID만
 
-            for box in result.boxes:
+    if results and len(results) > 0:
+        boxes = results[0].boxes
+
+        if boxes is not None and len(boxes) > 0:
+            for box in boxes:
+                cls_id   = int(box.cls[0].item())
+                cls_name = class_names.get(cls_id, "")
+
+                # ── 1) Weapon 감지 (track_id 없어도 OK) ──
+                if cls_name in WEAPON_CLASS_NAMES:
+                    weapon_count += 1
+                    x1, y1, x2, y2 = box.xyxy[0]
+                    weapon_boxes.append((x1.item(), y1.item(), x2.item(), y2.item()))
+                    continue
+
+                # ── 2) track_id 없는 객체는 loitering 스킵 ──
                 if box.id is None:
                     continue
 
-                tid  = int(box.id[0])
-                xyxy = box.xyxy[0].tolist()
-                cx, cy = center_of_box(xyxy)
-                inside = is_inside_roi(cx, cy, roi)
+                track_id = int(box.id[0].item())
+                x1, y1, x2, y2 = box.xyxy[0]
+                bbox = (x1.item(), y1.item(), x2.item(), y2.item())
+                cx, cy = get_box_center(bbox)
+                current_inside = is_center_inside_roi(cx, cy, roi)
 
-                state = tracker.update(tid, inside, fps_video)
+                # ── 3) Loitering 상태 업데이트 ─────────
+                mgr.update(track_id, bbox, current_inside, video_fps)
+                active_track_ids.add(track_id)
 
-                has_weapon = any(w["track_id"] == tid for w in frame_weapons)
-                risk = calculate_risk(
-                    state["entry_count"],
-                    state["dwell_seconds"],
-                    has_weapon
-                )
+    # weapon 이벤트 로깅
+    if weapon_count > 0:
+        mgr.log_weapon_event(weapon_count)
 
-                if has_weapon:
-                    status = "Weapon"
-                elif state["is_loitering"]:
-                    status = "Loitering"
-                else:
-                    status = "Normal"
+    # ── Overlay 그리기 ─────────────────────────
+    draw_roi(frame, roi)
 
-                frame = draw_person_box(frame, xyxy, tid, status, risk)
+    # 이번 프레임에 감지된 ID만 bbox 표시 (잔상 방지)
+    all_states = mgr.get_all_states()
+    for tid in active_track_ids:
+        if tid in all_states:
+            draw_person_box(frame, all_states[tid])
 
-                track_states[tid] = {
-                    "risk":          risk,
-                    "entry_count":   state["entry_count"],
-                    "dwell_seconds": state["dwell_seconds"]
-                }
+    # weapon bbox 표시
+    for wb in weapon_boxes:
+        wx1, wy1, wx2, wy2 = [int(v) for v in wb]
+        cv2.rectangle(frame, (wx1, wy1), (wx2, wy2), (0, 0, 220), 2)
+        cv2.putText(frame, "WEAPON", (wx1, wy1 - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 220), 2, cv2.LINE_AA)
 
-                # 무기/서성거림 감지 시 즉시 로그 기록 (중복 방지)
-                if status != "Normal":
-                    log_key = (tid, status.lower())
-                    if log_key not in st.session_state.logged_ids:
-                        append_event(tid, status.lower(), risk)
-                        st.session_state.logged_ids.add(log_key)
+    if weapon_count > 0:
+        draw_weapon_alert(frame, weapon_count)
 
-                    frame_alerts.append({
-                        "track_id":      tid,
-                        "event_type":    status.lower(),
-                        "risk":          risk,
-                        "entry_count":   state["entry_count"],
-                        "dwell_seconds": state["dwell_seconds"],
-                        "timestamp":     datetime.now().strftime("%H:%M:%S")
-                    })
+    # FPS 계산
+    elapsed = time.perf_counter() - t0
+    cur_fps = 1.0 / elapsed if elapsed > 0 else 0.0
+    fps_history.append(cur_fps)
+    if len(fps_history) > 30:
+        fps_history.pop(0)
+    avg_fps = sum(fps_history) / len(fps_history)
 
-        if roi:
-            frame = draw_roi(frame, roi)
+    draw_fps(frame, avg_fps)
 
-        for w in frame_weapons:
-            frame = draw_weapon_box(
-                frame, w["xyxy"], w["track_id"], w["cls_name"], w["conf"]
-            )
+    # ── Streamlit 에 프레임 출력 ───────────────
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    video_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
 
-        # FPS 계산 0 나누기 방지
-        now      = time.time()
-        elapsed  = now - prev_time
-        fps_now  = 1.0 / elapsed if elapsed > 0 else 0.0
-        prev_time = now
+    # ── 이벤트 로그 (MED/HIGH만 표시) ──────────
+    import pandas as pd
+    events = mgr.get_events()
+    important = [e for e in events if e.risk_level in ("MED", "HIGH")]
+    if important:
+        ev_rows = []
+        for e in reversed(important[-10:]):
+            ev_rows.append({
+                "시각": e.timestamp,
+                "ID": f"#{e.track_id}" if e.track_id >= 0 else "WEAPON",
+                "유형": "서성거림" if e.event_type == "loitering" else "무기탐지",
+                "위험도": e.risk_level,
+            })
+        event_placeholder.dataframe(
+            pd.DataFrame(ev_rows), hide_index=True, use_container_width=True
+        )
 
-        frame = draw_fps(frame, fps_now)
-        rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        video_area.image(rgb, width=700)
+cap.release()
 
-        # session_state 갱신은 하되
-        # update_ui()는 루프 안에서 호출하지 않음
-        # -> Streamlit 재실행 트리거 방지
-        if frame_alerts:
-            alerts = frame_alerts   # 최신 alert로 교체
-        st.session_state.alerts       = alerts
-        st.session_state.track_states = track_states
+# ── 분석 완료 요약 ─────────────────────────────
+st.success("✅ 영상 분석이 완료되었습니다.")
+st.markdown("---")
+st.subheader("📋 분석 요약")
 
-except Exception as e:
-    st.error(f"영상 처리 중 오류 발생: {e}")
+events = mgr.get_events()
+high_cnt   = sum(1 for e in events if e.risk_level == "HIGH")
+med_cnt    = sum(1 for e in events if e.risk_level == "MED")
+weapon_cnt = sum(1 for e in events if e.event_type == "weapon")
+avg_fps_final = sum(fps_history) / len(fps_history) if fps_history else 0.0
 
-finally:
-    if cap is not None:
-        cap.release()
-    if tmp_path and os.path.exists(tmp_path):
-        try:
-            os.remove(tmp_path)
-        except Exception:
-            pass  # 삭제 실패해도 앱은 계속 동작
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("🔴 HIGH 이벤트", high_cnt)
+c2.metric("🟠 MED 이벤트",  med_cnt)
+c3.metric("🔫 Weapon 감지", weapon_cnt)
+c4.metric("⚡ 평균 FPS",   f"{avg_fps_final:.1f}")
 
-# 루프 종료 후 UI 최종 갱신 
-update_ui()
-st.success("✅ 분석 완료")
+if events:
+    import pandas as pd
+    final_rows = [
+        {
+            "시각":    e.timestamp,
+            "ID":     f"#{e.track_id}" if e.track_id >= 0 else "WEAPON",
+            "유형":   "서성거림" if e.event_type == "loitering" else "무기탐지",
+            "위험도": e.risk_level,
+            "체류(s)": f"{e.dwell_seconds:.1f}",
+            "진입횟수": e.entry_count,
+        }
+        for e in events
+    ]
+    st.dataframe(pd.DataFrame(final_rows), hide_index=True, use_container_width=True)
+else:
+    st.info("감지된 이상행동 이벤트가 없습니다.")
+
+# ROI 재설정 (분석 후)
+if st.button("🔄 다시 분석하기"):
+    _reset_analysis()
+    st.rerun()
