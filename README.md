@@ -10,7 +10,7 @@
 
 ### 1.1 CCTV 영상 / 이미지 업로드
 
-![업로드 화면](docs/screenshots/01_upload_screen.png)
+![업로드 화면](./docs/screenshots/01_upload_screen.png)
 
 사용자는 Streamlit 웹 앱에서 CCTV 영상 또는 이미지를 업로드할 수 있습니다.
 
@@ -25,7 +25,7 @@
 
 ### 1.2 ROI 설정
 
-![ROI 설정 화면](docs/screenshots/02_roi_setting.png)
+![ROI 설정 화면](./docs/screenshots/02_roi_setting.png)
 
 ATM 주변 영역을 관심 구역, 즉 ROI로 지정합니다.
 
@@ -48,7 +48,7 @@ YOLOv8 기반 객체 탐지 모델을 사용하여 프레임 단위로 객체를
 
 ### 1.4 Object Tracking
 
-![실시간 분석 화면](docs/screenshots/03_cctv_analysis.png)
+![실시간 분석 화면](./docs/screenshots/03_cctv_analysis.png)
 
 YOLO 탐지 결과에 ByteTrack을 적용하여 객체별 고유 Track ID를 부여합니다.
 
@@ -131,9 +131,9 @@ Streamlit 기반 대시보드는 다음 페이지로 구성됩니다.
 | 위험 이벤트   | 감지된 이벤트 목록 확인, 상세보기, 출동/오탐 처리                            |
 | 통계 분석     | 전체 이벤트 수, HIGH 이벤트 수, 평균 체류시간, 오탐 처리율, 위험도 분포 확인 |
 
-![위험 이벤트 화면](docs/screenshots/04_event_log.png)
-![이벤트 상세보기](docs/screenshots/05_event_detail.png)
-![통계 분석 화면](docs/screenshots/06_stats_page.png)
+![위험 이벤트 화면](./docs/screenshots/04_event_log.png)
+![이벤트 상세보기](./docs/screenshots/05_event_detail.png)
+![통계 분석 화면](./docs/screenshots/06_stats_page.png)
 
 ---
 
