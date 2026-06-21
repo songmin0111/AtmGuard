@@ -64,9 +64,9 @@ class LoiteringStateManager:
     """
 
     # Re-ID 임계값: 코사인 유사도 기준 (0~1, 높을수록 유사)
-    REID_SIMILARITY_THRESH = 0.9
+    REID_SIMILARITY_THRESH = 0.85
     # 사라진 후 몇 프레임까지 Re-ID 시도할지
-    REID_LOST_FRAME_LIMIT = 30
+    REID_LOST_FRAME_LIMIT = 120
     ENTRY_RECOUNT_GAP_FRAMES = 15
 
     def __init__(self):
@@ -106,29 +106,47 @@ class LoiteringStateManager:
         """
 
         # Re-ID: 새 track_id가 lost_tracks의 누군가와 유사한지 확인 
-        if track_id not in self._states and self._lost_tracks and frame is not None:
-            matched_old_id = self._try_reid(track_id, bbox, frame)
-            
+                # Re-ID 시작 
+        raw_track_id = track_id
+
+        # 1) 이미 alias 등록된 ByteTrack ID면 대표 ID로 변환
+        track_id = self._id_alias.get(raw_track_id, raw_track_id)
+
+        # 2) 완전히 새로 들어온 raw ID일 때만 Re-ID 시도
+        #    active states 전체와 비교하지 말고, lost_tracks 하고만 비교한다.
+        if (
+            raw_track_id not in self._id_alias
+            and track_id not in self._states
+            and self._lost_tracks
+            and frame is not None
+        ):
+            matched_old_id = self._try_reid(raw_track_id, bbox, frame)
+
             if matched_old_id is not None:
-                 # 새 ByteTrack ID를 기존 ID로 매핑
-                self._id_alias[track_id] = matched_old_id
-                self._lost_tracks.pop(matched_old_id, None)
+                print(
+                    f"[REID SUCCESS] raw={raw_track_id} -> old={matched_old_id}, "
+                    f"frame={self._frame_idx}"
+                )
+
+                self._id_alias[raw_track_id] = matched_old_id
                 track_id = matched_old_id
-        
+
                 self._stats.reidentified += 1
                 self._stats.id_switches += 1
-        # 이미 alias 등록된 ID면 기존 대표 ID로 변환
-        track_id = self._id_alias.get(track_id, track_id)
-        
+
+        # 3) Re-ID로 복구된 ID가 lost_tracks에 있으면 기존 state 복구
+        if track_id not in self._states and track_id in self._lost_tracks:
+            self._states[track_id] = self._lost_tracks.pop(track_id)
+
+        # 4) 현재 프레임에 다시 보인 ID는 lost 후보에서 제거
+        self._lost_tracks.pop(track_id, None)
+
+        # 5) 그래도 없을 때만 진짜 새 상태 생성
         if track_id not in self._states:
             print(f"[NEW STATE CREATED] track_id={track_id}, frame={self._frame_idx}")
-
-            # 혹시 lost_tracks에 같은 ID가 남아 있으면 기존 상태 복구
-            if track_id in self._lost_tracks:
-                self._states[track_id] = self._lost_tracks.pop(track_id)
-            else:
-                self._states[track_id] = TrackState(track_id=track_id)
-                self._stats.total_tracks += 1
+            self._states[track_id] = TrackState(track_id=track_id)
+            self._stats.total_tracks += 1
+        # Re-ID 
 
         s = self._states[track_id]
         s.bbox = bbox
@@ -197,9 +215,64 @@ class LoiteringStateManager:
         if 0 <= event_idx < len(self._events):
             self._events[event_idx].response_status = status
             self._events[event_idx].response_note = note
+    
+    def _merge_duplicate_track(self, keep_id: int, drop_id: int):
+        """
+            같은 사람으로 판단된 두 track을 하나로 합친다.
+            keep_id는 유지할 대표 ID, drop_id는 제거할 ID.
+        """
+        if keep_id == drop_id:
+            return
+
+        if keep_id not in self._states and drop_id not in self._states:
+            return
+
+        if keep_id not in self._states and drop_id in self._states:
+            self._states[keep_id] = self._states.pop(drop_id)
+            self._states[keep_id].track_id = keep_id
+            self._id_alias[drop_id] = keep_id
+            return
+
+        if drop_id not in self._states:
+            self._id_alias[drop_id] = keep_id
+            self._lost_tracks.pop(drop_id, None)
+            return
+
+        keep = self._states[keep_id]
+        drop = self._states[drop_id]
+
+        keep.entry_count = max(keep.entry_count, drop.entry_count)
+        keep.dwell_frames = max(keep.dwell_frames, drop.dwell_frames)
+        keep.dwell_seconds = max(keep.dwell_seconds, drop.dwell_seconds)
+        keep.outside_frames = min(keep.outside_frames, drop.outside_frames)
+        keep.inside_roi = keep.inside_roi or drop.inside_roi
+
+        keep.bbox = drop.bbox
+        keep.cx = drop.cx
+        keep.cy = drop.cy
+        keep.last_seen_frame = max(keep.last_seen_frame, drop.last_seen_frame)
+
+        if drop.color_hist is not None:
+            keep.color_hist = drop.color_hist
+
+        risk_order = {"NORMAL": 0, "LOW": 1, "MED": 2, "HIGH": 3}
+        if risk_order.get(drop.risk_level, 0) > risk_order.get(keep.risk_level, 0):
+            keep.risk_level = drop.risk_level
+
+        keep.is_loitering = keep.is_loitering or drop.is_loitering
+
+        self._states.pop(drop_id, None)
+        self._lost_tracks.pop(drop_id, None)
+        self._id_alias[drop_id] = keep_id
+
+        print(f"[MERGE DUPLICATE] keep={keep_id}, drop={drop_id}, frame={self._frame_idx}")
 
     def get_all_states(self) -> Dict[int, TrackState]:
         return self._states
+    
+    def resolve_track_id(self, track_id: int) -> int:
+        """ByteTrack raw ID를 내부 대표 ID로 변환한다."""
+        return self._id_alias.get(track_id, track_id)
 
     def get_events(self) -> List[EventLog]:
         return self._events
@@ -313,34 +386,52 @@ class LoiteringStateManager:
     def _try_reid(self, new_id: int, bbox: Tuple, frame: np.ndarray) -> Optional[int]:
         """
             새로 등장한 new_id의 색상 히스토그램과 lost_tracks를 비교.
-            유사도가 임계값 이상인 가장 가까운 lost ID를 반환.
+            active states끼리 비교하지 않는다. false merge 방지
         """
         new_hist = self._compute_hist(frame, bbox)
         if new_hist is None:
             return None
-        
+
         x1, y1, x2, y2 = bbox
         new_cx = int((x1 + x2) / 2)
         new_cy = int((y1 + y2) / 2)
 
         best_id = None
-        best_sim = self.REID_SIMILARITY_THRESH
-        
-        MAX_CENTER_DISTANCE = 80  # 너무 멀리 떨어진 객체는 같은 사람으로 보지 않음
+        best_score = -999.0
 
         for lost_id, lost_state in self._lost_tracks.items():
-            # 너무 오래된 트랙은 스킵
-            if (self._frame_idx - lost_state.last_seen_frame) > self.REID_LOST_FRAME_LIMIT:
-                continue
-            
-            dist = ((new_cx - lost_state.cx) ** 2 + (new_cy - lost_state.cy) ** 2) ** 0.5
+            gap = self._frame_idx - lost_state.last_seen_frame
 
-            if dist > MAX_CENTER_DISTANCE:
+            if gap <= 0:
                 continue
-            
+
+            if gap > self.REID_LOST_FRAME_LIMIT:
+                continue
+
+            if lost_state.color_hist is None:
+                continue
+
+            dist = ((new_cx - lost_state.cx) ** 2 + (new_cy - lost_state.cy) ** 2) ** 0.5
             sim = self._cosine_sim(new_hist, lost_state.color_hist)
-            if sim > best_sim:
-                best_sim = sim
+
+            print(
+                f"[REID CHECK] new={new_id}, lost={lost_id}, "
+                f"gap={gap}, dist={dist:.1f}, sim={sim:.3f}"
+            )
+
+            # 가까우면 sim 기준을 조금 낮게, 멀면 sim 기준을 높게
+            close_match = gap <= 30 and dist <= 70 and sim >= 0.75
+            normal_match = gap <= 30 and dist <= 160 and sim >= 0.85
+            strong_far_match = gap <= 10 and dist <= 230 and sim >= 0.92
+            
+            if not (close_match or normal_match or strong_far_match):
+                continue
+
+            # sim 높고, 거리 짧고, gap 짧을수록 좋은 후보
+            score = sim - (dist / 300.0) - (gap / 200.0)
+
+            if score > best_score:
+                best_score = score
                 best_id = lost_id
 
         return best_id

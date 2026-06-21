@@ -106,6 +106,7 @@ def run_video_analysis(model, video_path: str, video_placeholder) -> None:
         weapon_count = 0
         weapon_boxes = []
         active_ids   = set()
+        person_detections = []
 
         if results and len(results) > 0 and results[0].boxes is not None:
             for box in results[0].boxes:
@@ -121,17 +122,30 @@ def run_video_analysis(model, video_path: str, video_placeholder) -> None:
                 if box.id is None:
                     continue
 
-                track_id = int(box.id[0].item())
+                raw_track_id = int(box.id[0].item())
                 x1, y1, x2, y2 = box.xyxy[0]
                 bbox = (x1.item(), y1.item(), x2.item(), y2.item())
+                
                 cx, cy = get_box_center(bbox)
                 inside = is_center_inside_roi(cx, cy, roi)
-                mgr.update(track_id, bbox, inside, video_fps, frame)
-                active_ids.add(track_id)
+                
+                person_detections.append((raw_track_id, bbox, inside))
+
+        # 2) 이번 프레임에서 안 보이는 기존 ID를 먼저 lost_tracks에 넣기
+        detected_effective_ids = {
+            mgr.resolve_track_id(raw_id)
+            for raw_id, _, _ in person_detections
+        }
 
         all_ids = set(mgr.get_all_states().keys())
-        for tid in all_ids - active_ids:
+        for tid in all_ids - detected_effective_ids:
             mgr.mark_lost(tid)
+        
+        # 3) 그 다음 update 수행 → 새 ID가 들어오면 lost_tracks와 Re-ID 비교 가능
+        for raw_track_id, bbox, inside in person_detections:
+            state = mgr.update(raw_track_id, bbox, inside, video_fps, frame)
+            active_ids.add(state.track_id)
+                    
         mgr.cleanup_lost()
 
         if weapon_count > 0:

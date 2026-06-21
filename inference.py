@@ -38,7 +38,8 @@ def run_tracking(model, frame, conf_threshold: float):
     results = model.track(
         frame,
         conf=conf_threshold,
-        persist=False,
+        iou=0.5,
+        persist=True,
         tracker=_TRACKER_CFG,
         verbose=False,
     )

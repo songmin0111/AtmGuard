@@ -18,8 +18,8 @@ LOW_DWELL_SECONDS  = 2    # ROI 진입 후 위험도 LOW 전환 기준
 MED_DWELL_SECONDS  = 4    # MED 체류시간 기준 (초)
 HIGH_DWELL_SECONDS = 6    # HIGH 체류시간 기준 (초)
 
-MED_ENTRY_COUNT  = 2      # MED 진입횟수 기준
-HIGH_ENTRY_COUNT = 3      # HIGH 진입횟수 기준
+MED_ENTRY_COUNT  = 3      # MED 진입횟수 기준
+HIGH_ENTRY_COUNT = 5      # HIGH 진입횟수 기준
 
 # Weapon 클래스 이름 
 # best.pt 에서 사용하는 실제 클래스명으로 맞춰야 함
