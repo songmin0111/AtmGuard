@@ -258,7 +258,7 @@ ATM-Guard/
 | 파일        | 설명                                            | 다운로드                                                                                     |
 | ----------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `best.pt`   | YOLOv8 학습 모델. 기본 실행에 사용              | [링크](https://drive.google.com/drive/folders/1glL-PJ7zAR0TlG5jJbAERJAt7EcihZqB?usp=sharing) |
-| `best.onnx` | ONNX 변환 모델. 추론 최적화 실험 및 속도 비교용 | [링](https://drive.google.com/drive/folders/1glL-PJ7zAR0TlG5jJbAERJAt7EcihZqB?usp=sharing)   |
+| `best.onnx` | ONNX 변환 모델. 추론 최적화 실험 및 속도 비교용 | [링크](https://drive.google.com/drive/folders/1glL-PJ7zAR0TlG5jJbAERJAt7EcihZqB?usp=sharing) |
 
 ### Weight File Setup
 
