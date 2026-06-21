@@ -31,7 +31,6 @@ logs/*.json
 *.mov
 *.jpg
 *.jpeg
-*.png
 !assets/          # assets 폴더 있으면 예외
 
 # ── Streamlit 캐시 ─────────────────────────────────────────
