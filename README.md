@@ -303,7 +303,7 @@ test_videos/test_video_02.mp4
 
 ```bash
 git clone https://github.com/songmin0111/AtmGuard.git
-cd ATM-Guard
+cd ATMGuard
 ```
 
 ---
